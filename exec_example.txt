@@ -1,0 +1,10 @@
+# train
+
+python code/train_hopenet.py --gpu 1\
+    --num_epochs 10\
+    --batch_size 30\
+    --lr 0.001\
+    --dataset Pose_300W_LP\
+    --data_dir ./dataset/300W_LP\
+    --output_string tmp\
+    --snapshot ./snapshot
