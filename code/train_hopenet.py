@@ -1,4 +1,7 @@
-import sys, os, argparse, time
+import sys
+import os
+import argparse
+import time
 
 import numpy as np
 import cv2
@@ -6,6 +9,7 @@ import matplotlib.pyplot as plt
 
 import torch
 import torch.nn as nn
+import torch.utils.data
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
 from torchvision import transforms
@@ -13,33 +17,39 @@ import torchvision
 import torch.backends.cudnn as cudnn
 import torch.nn.functional as F
 
-import datasets, hopenet
+import datasets
+import hopenet
 import torch.utils.model_zoo as model_zoo
+
 
 def parse_args():
     """Parse input arguments."""
-    parser = argparse.ArgumentParser(description='Head pose estimation using the Hopenet network.')
+    parser = argparse.ArgumentParser(
+        description='Head pose estimation using the Hopenet network.')
     parser.add_argument('--gpu', dest='gpu_id', help='GPU device id to use [0]',
-            default=0, type=int)
+                        default=0, type=int)
     parser.add_argument('--num_epochs', dest='num_epochs', help='Maximum number of training epochs.',
-          default=5, type=int)
+                        default=5, type=int)
     parser.add_argument('--batch_size', dest='batch_size', help='Batch size.',
-          default=16, type=int)
+                        default=16, type=int)
     parser.add_argument('--lr', dest='lr', help='Base learning rate.',
-          default=0.001, type=float)
-    parser.add_argument('--dataset', dest='dataset', help='Dataset type.', default='Pose_300W_LP', type=str)
+                        default=0.001, type=float)
+    parser.add_argument('--dataset', dest='dataset',
+                        help='Dataset type.', default='Pose_300W_LP', type=str)
     parser.add_argument('--data_dir', dest='data_dir', help='Directory path for data.',
-          default='', type=str)
+                        default='', type=str)
     parser.add_argument('--filename_list', dest='filename_list', help='Path to text file containing relative paths for every example.',
-          default='', type=str)
-    parser.add_argument('--output_string', dest='output_string', help='String appended to output snapshots.', default = '', type=str)
+                        default='', type=str)
+    parser.add_argument('--output_string', dest='output_string',
+                        help='String appended to output snapshots.', default='', type=str)
     parser.add_argument('--alpha', dest='alpha', help='Regression loss coefficient.',
-          default=0.001, type=float)
+                        default=0.001, type=float)
     parser.add_argument('--snapshot', dest='snapshot', help='Path of model snapshot.',
-          default='', type=str)
+                        default='', type=str)
 
     args = parser.parse_args()
     return args
+
 
 def get_ignored_params(model):
     # Generator function that yields ignored params.
@@ -51,6 +61,7 @@ def get_ignored_params(model):
             for name, param in module.named_parameters():
                 yield param
 
+
 def get_non_ignored_params(model):
     # Generator function that yields params that will be optimized.
     b = [model.layer1, model.layer2, model.layer3, model.layer4]
@@ -61,6 +72,7 @@ def get_non_ignored_params(model):
             for name, param in module.named_parameters():
                 yield param
 
+
 def get_fc_params(model):
     # Generator function that yields fc layer params.
     b = [model.fc_yaw, model.fc_pitch, model.fc_roll]
@@ -69,12 +81,21 @@ def get_fc_params(model):
             for name, param in module.named_parameters():
                 yield param
 
+
 def load_filtered_state_dict(model, snapshot):
     # By user apaszke from discuss.pytorch.org
     model_dict = model.state_dict()
     snapshot = {k: v for k, v in snapshot.items() if k in model_dict}
     model_dict.update(snapshot)
     model.load_state_dict(model_dict)
+
+
+def my_collate(batch):
+    print(type(batch))
+    print(batch[0])
+    batch = filter(lambda x: x is not None, batch)
+    return torch.utils.data.dataloader.default_collate(batch)
+
 
 if __name__ == '__main__':
     args = parse_args()
@@ -88,36 +109,47 @@ if __name__ == '__main__':
         os.makedirs('output/snapshots')
 
     # ResNet50 structure
-    model = hopenet.Hopenet(torchvision.models.resnet.Bottleneck, [3, 4, 6, 3], 66)
+    model = hopenet.Hopenet(
+        torchvision.models.resnet.Bottleneck, [3, 4, 6, 3], 66)
 
     if args.snapshot == '':
-        load_filtered_state_dict(model, model_zoo.load_url('https://download.pytorch.org/models/resnet50-19c8e357.pth'))
+        load_filtered_state_dict(model, model_zoo.load_url(
+            'https://download.pytorch.org/models/resnet50-19c8e357.pth'))
     else:
         saved_state_dict = torch.load(args.snapshot)
         model.load_state_dict(saved_state_dict)
 
     print 'Loading data.'
 
-    transformations = transforms.Compose([transforms.Scale(240),
-    transforms.RandomCrop(224), transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+    transformations = transforms.Compose([transforms.Resize(240),
+                                          transforms.RandomCrop(
+                                              224), transforms.ToTensor(),
+                                          transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
 
     if args.dataset == 'Pose_300W_LP':
-        pose_dataset = datasets.Pose_300W_LP(args.data_dir, args.filename_list, transformations)
+        pose_dataset = datasets.Pose_300W_LP(
+            args.data_dir, transformations)
     elif args.dataset == 'Pose_300W_LP_random_ds':
-        pose_dataset = datasets.Pose_300W_LP_random_ds(args.data_dir, args.filename_list, transformations)
+        pose_dataset = datasets.Pose_300W_LP_random_ds(
+            args.data_dir, args.filename_list, transformations)
     elif args.dataset == 'Synhead':
-        pose_dataset = datasets.Synhead(args.data_dir, args.filename_list, transformations)
+        pose_dataset = datasets.Synhead(
+            args.data_dir, args.filename_list, transformations)
     elif args.dataset == 'AFLW2000':
-        pose_dataset = datasets.AFLW2000(args.data_dir, args.filename_list, transformations)
+        pose_dataset = datasets.AFLW2000(
+            args.data_dir, args.filename_list, transformations)
     elif args.dataset == 'BIWI':
-        pose_dataset = datasets.BIWI(args.data_dir, args.filename_list, transformations)
+        pose_dataset = datasets.BIWI(
+            args.data_dir, args.filename_list, transformations)
     elif args.dataset == 'AFLW':
-        pose_dataset = datasets.AFLW(args.data_dir, args.filename_list, transformations)
+        pose_dataset = datasets.AFLW(
+            args.data_dir, args.filename_list, transformations)
     elif args.dataset == 'AFLW_aug':
-        pose_dataset = datasets.AFLW_aug(args.data_dir, args.filename_list, transformations)
+        pose_dataset = datasets.AFLW_aug(
+            args.data_dir, args.filename_list, transformations)
     elif args.dataset == 'AFW':
-        pose_dataset = datasets.AFW(args.data_dir, args.filename_list, transformations)
+        pose_dataset = datasets.AFW(
+            args.data_dir, args.filename_list, transformations)
     else:
         print 'Error: not a valid dataset name'
         sys.exit()
@@ -125,7 +157,8 @@ if __name__ == '__main__':
     train_loader = torch.utils.data.DataLoader(dataset=pose_dataset,
                                                batch_size=batch_size,
                                                shuffle=True,
-                                               num_workers=2)
+                                               num_workers=2,
+                                               collate_fn=my_collate)
 
     model.cuda(gpu)
     criterion = nn.CrossEntropyLoss().cuda(gpu)
@@ -138,9 +171,10 @@ if __name__ == '__main__':
     idx_tensor = Variable(torch.FloatTensor(idx_tensor)).cuda(gpu)
 
     optimizer = torch.optim.Adam([{'params': get_ignored_params(model), 'lr': 0},
-                                  {'params': get_non_ignored_params(model), 'lr': args.lr},
+                                  {'params': get_non_ignored_params(
+                                      model), 'lr': args.lr},
                                   {'params': get_fc_params(model), 'lr': args.lr * 5}],
-                                   lr = args.lr)
+                                 lr=args.lr)
 
     print 'Ready to train network.'
     for epoch in range(num_epochs):
@@ -148,14 +182,14 @@ if __name__ == '__main__':
             images = Variable(images).cuda(gpu)
 
             # Binned labels
-            label_yaw = Variable(labels[:,0]).cuda(gpu)
-            label_pitch = Variable(labels[:,1]).cuda(gpu)
-            label_roll = Variable(labels[:,2]).cuda(gpu)
+            label_yaw = Variable(labels[:, 0]).cuda(gpu)
+            label_pitch = Variable(labels[:, 1]).cuda(gpu)
+            label_roll = Variable(labels[:, 2]).cuda(gpu)
 
             # Continuous labels
-            label_yaw_cont = Variable(cont_labels[:,0]).cuda(gpu)
-            label_pitch_cont = Variable(cont_labels[:,1]).cuda(gpu)
-            label_roll_cont = Variable(cont_labels[:,2]).cuda(gpu)
+            label_yaw_cont = Variable(cont_labels[:, 0]).cuda(gpu)
+            label_pitch_cont = Variable(cont_labels[:, 1]).cuda(gpu)
+            label_roll_cont = Variable(cont_labels[:, 2]).cuda(gpu)
 
             # Forward pass
             yaw, pitch, roll = model(images)
@@ -171,7 +205,8 @@ if __name__ == '__main__':
             roll_predicted = softmax(roll)
 
             yaw_predicted = torch.sum(yaw_predicted * idx_tensor, 1) * 3 - 99
-            pitch_predicted = torch.sum(pitch_predicted * idx_tensor, 1) * 3 - 99
+            pitch_predicted = torch.sum(
+                pitch_predicted * idx_tensor, 1) * 3 - 99
             roll_predicted = torch.sum(roll_predicted * idx_tensor, 1) * 3 - 99
 
             loss_reg_yaw = reg_criterion(yaw_predicted, label_yaw_cont)
@@ -191,10 +226,10 @@ if __name__ == '__main__':
 
             if (i+1) % 100 == 0:
                 print ('Epoch [%d/%d], Iter [%d/%d] Losses: Yaw %.4f, Pitch %.4f, Roll %.4f'
-                       %(epoch+1, num_epochs, i+1, len(pose_dataset)//batch_size, loss_yaw.data[0], loss_pitch.data[0], loss_roll.data[0]))
+                       % (epoch+1, num_epochs, i+1, len(pose_dataset)//batch_size, loss_yaw.item(), loss_pitch.item(), loss_roll.item()))
 
         # Save models at numbered epochs.
         if epoch % 1 == 0 and epoch < num_epochs:
             print 'Taking snapshot...'
             torch.save(model.state_dict(),
-            'output/snapshots/' + args.output_string + '_epoch_'+ str(epoch+1) + '.pkl')
+                       'output/snapshots/' + args.output_string + '_epoch_' + str(epoch+1) + '.pkl')

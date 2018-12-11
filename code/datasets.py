@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 import glob
 import os
 import numpy as np
@@ -102,7 +104,11 @@ class Pose_300W_LP(Dataset):
         for each_dir in dir_path_ls:
             dir_path = os.path.join(data_dir, each_dir)
             files = glob.glob(dir_path+'/*.jpg')
-            files_ls.extend(files)
+            # ファイル名を取得
+            for _file in files:
+                file_name, ext = os.path.splitext(os.path.basename(_file))
+                dir_file_name = os.path.join(each_dir, file_name)
+                files_ls.append(dir_file_name)
 
         self.X_train = files_ls
         self.y_train = files_ls
